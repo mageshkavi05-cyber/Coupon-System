@@ -1,9 +1,12 @@
-
 pipeline {
     agent any
 
+    options {
+        skipDefaultCheckout(true)
+    }
+
     environment {
-        IMAGE = 'mageshkavi05/coupon-system-v3:latest'
+        IMAGE = 'mageshkavi05/coupon-system-v3'
         DOCKER = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
         KUBECTL = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe'
     }
@@ -11,20 +14,25 @@ pipeline {
     stages {
         stage('Checkout Verification') {
             steps {
+                checkout scm
                 bat 'git log -1 --oneline'
             }
         }
 
         stage('Install and Test') {
             steps {
-                bat 'npm ci'
-                bat 'npm test'
+                bat 'npm.cmd ci'
+                bat 'npm.cmd test'
             }
         }
 
         stage('Docker Build') {
             steps {
-                bat '"%DOCKER%" build -t %IMAGE% .'
+                bat '''
+                    "%DOCKER%" build ^
+                        -t "%IMAGE%:%BUILD_NUMBER%" ^
+                        -t "%IMAGE%:latest" .
+                '''
             }
         }
 
@@ -35,27 +43,28 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_TOKEN'
                 )]) {
-                    powershell '''
-                        $ErrorActionPreference = 'Stop'
-                        $env:DOCKER_CONFIG = Join-Path $env:WORKSPACE 'docker-auth'
-                        New-Item -ItemType Directory -Force -Path $env:DOCKER_CONFIG | Out-Null
+                    bat '''
+                        @echo off
+                        setlocal DisableDelayedExpansion
 
-                        $token = $env:DOCKER_TOKEN
-                        if ([string]::IsNullOrWhiteSpace($token)) {
-                            throw 'Docker Hub token is empty. Check Jenkins credential dockerhub-creds.'
-                        }
+                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
+                        if not exist "%DOCKER_CONFIG%" mkdir "%DOCKER_CONFIG%"
 
-                        $token | & $env:DOCKER login --username $env:DOCKER_USER --password-stdin
-                        if ($LASTEXITCODE -ne 0) {
-                            throw 'Docker Hub login failed.'
-                        }
+                        echo ===== DockerHub Login =====
+                        echo %DOCKER_TOKEN%| "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin
+                        if errorlevel 1 exit /b 1
 
-                        & $env:DOCKER push $env:IMAGE
-                        if ($LASTEXITCODE -ne 0) {
-                            throw 'Docker Hub image push failed.'
-                        }
+                        echo ===== Push Versioned Image =====
+                        "%DOCKER%" push "%IMAGE%:%BUILD_NUMBER%"
+                        if errorlevel 1 exit /b 1
 
-                        & $env:DOCKER logout
+                        echo ===== Push Latest Image =====
+                        "%DOCKER%" push "%IMAGE%:latest"
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== DockerHub Logout =====
+                        "%DOCKER%" logout
+                        if errorlevel 1 exit /b 1
                     '''
                 }
             }
@@ -74,8 +83,8 @@ pipeline {
                         "%KUBECTL%" apply -f k8s/v3.yaml
                         if errorlevel 1 exit /b 1
 
-                        echo ===== Restart Deployment =====
-                        "%KUBECTL%" rollout restart deployment/coupon-v3
+                        echo ===== Update Deployment Image =====
+                        "%KUBECTL%" set image deployment/coupon-v3 coupon-v3=%IMAGE%:%BUILD_NUMBER%
                         if errorlevel 1 exit /b 1
 
                         echo ===== Wait for Deployment =====
@@ -100,7 +109,16 @@ pipeline {
             bat '''
                 @echo off
                 if exist "%WORKSPACE%\\docker-auth" rmdir /s /q "%WORKSPACE%\\docker-auth"
+                echo Coupon V3 CI/CD pipeline finished.
             '''
+        }
+
+        success {
+            echo 'V3 pipeline completed successfully!'
+        }
+
+        failure {
+            echo 'V3 pipeline failed. Check the Console Output.'
         }
     }
 }
