@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const VERSION = 'v2';
+const VERSION = 'v3';
 
 const coupons = new Map();
 
@@ -117,14 +117,14 @@ app.post('/coupons', (req, res) => {
   });
 });
 
-// List all coupons
+// List coupons
 app.get('/coupons', (req, res) => {
   res.status(200).json({
     coupons: Array.from(coupons.values())
   });
 });
 
-// V2: Validate a coupon
+// Validate a coupon
 app.get('/coupons/validate/:code', (req, res) => {
   const code = normalizeCode(req.params.code);
   const coupon = coupons.get(code);
@@ -164,7 +164,91 @@ app.get('/coupons/validate/:code', (req, res) => {
   });
 });
 
-// Handle errors
+// V3: Apply a coupon to an order
+app.post('/coupons/apply', (req, res) => {
+  const { code, orderAmount } = req.body || {};
+  const normalizedCode = normalizeCode(code);
+
+  if (
+    typeof orderAmount !== 'number' ||
+    !Number.isFinite(orderAmount) ||
+    orderAmount <= 0
+  ) {
+    return res.status(400).json({
+      message: 'orderAmount must be a positive number'
+    });
+  }
+
+  const coupon = coupons.get(normalizedCode);
+
+  if (!coupon) {
+    return res.status(404).json({
+      valid: false,
+      message: 'Coupon not found'
+    });
+  }
+
+  if (!coupon.active) {
+    return res.status(400).json({
+      valid: false,
+      message: 'Coupon is inactive'
+    });
+  }
+
+  if (coupon.expiresAt && new Date(coupon.expiresAt) <= new Date()) {
+    return res.status(400).json({
+      valid: false,
+      message: 'Coupon has expired'
+    });
+  }
+
+  if (coupon.usedCount >= coupon.usageLimit) {
+    return res.status(400).json({
+      valid: false,
+      message: 'Coupon usage limit reached'
+    });
+  }
+
+  if (orderAmount < coupon.minOrderAmount) {
+    return res.status(400).json({
+      valid: false,
+      message: 'Order amount is below the minimum required',
+      minOrderAmount: coupon.minOrderAmount
+    });
+  }
+
+  let discountAmount;
+
+  if (coupon.discountType === 'percentage') {
+    discountAmount = orderAmount * coupon.discountValue / 100;
+  } else {
+    discountAmount = coupon.discountValue;
+  }
+
+  // Never discount more than the order total.
+  discountAmount = Math.min(discountAmount, orderAmount);
+
+  discountAmount = Math.round((discountAmount + Number.EPSILON) * 100) / 100;
+
+  const finalAmount = Math.round(
+    (orderAmount - discountAmount + Number.EPSILON) * 100
+  ) / 100;
+
+  // Count a use only after all validation checks pass.
+  coupon.usedCount += 1;
+
+  return res.status(200).json({
+    success: true,
+    message: 'Coupon applied successfully',
+    code: coupon.code,
+    orderAmount,
+    discountAmount,
+    finalAmount,
+    remainingUses: coupon.usageLimit - coupon.usedCount
+  });
+});
+
+// Handle invalid JSON and server errors
 app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
