@@ -5,6 +5,7 @@ pipeline {
     options {
         disableConcurrentBuilds()
     }
+    
     parameters {
         string(
             name: 'BUILD_MESSAGE',
