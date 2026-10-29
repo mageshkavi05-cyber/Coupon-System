@@ -3,20 +3,14 @@ pipeline {
     agent any
 
     options {
-        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
     }
-    
-    parameters {
-        string(
-            name: 'BUILD_MESSAGE',
-            defaultValue: 'Coupon System CI Build',
-            description: 'Message for this build'
-        )
 
+    parameters {
         booleanParam(
             name: 'PUSH_IMAGE',
             defaultValue: true,
-            description: 'Build and push the Docker image to Docker Hub'
+            description: 'Push the Docker image to Docker Hub'
         )
 
         booleanParam(
@@ -27,47 +21,22 @@ pipeline {
     }
 
     environment {
-    	PATH = "C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
-    	IMAGE_NAME = 'mageshkavi05/coupon-system'
-    	IMAGE_TAG = "${BUILD_NUMBER}"
-    }
-    stages {
+        IMAGE = 'mageshkavi05/coupon-system'
 
-        stage('Checkout from GitHub') {
+        DOCKER = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+    }
+
+    stages {
+        stage('Checkout Verification') {
             steps {
                 checkout scm
-                bat 'echo GitHub checkout completed'
-                bat 'dir'
+                bat 'git log -1 --oneline'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                bat 'node --version'
-                bat 'npm.cmd --version'
                 bat 'npm.cmd install'
-            }
-        }
-
-        stage('Parallel Stages') {
-            parallel {
-                stage('Node Version') {
-                    steps {
-                        bat 'node --version'
-                    }
-                }
-
-                stage('NPM Version') {
-                    steps {
-                        bat 'npm.cmd --version'
-                    }
-                }
-
-                stage('List Project Files') {
-                    steps {
-                        bat 'dir'
-                    }
-                }
             }
         }
 
@@ -77,85 +46,105 @@ pipeline {
             }
         }
 
-        stage('Create Build Artifact') {
+        stage('Docker Build') {
             steps {
-                bat 'if not exist build mkdir build'
-                bat 'echo Coupon System Build > build\\build-info.txt'
-                bat 'echo Build Number: %BUILD_NUMBER% >> build\\build-info.txt'
-                bat 'echo Build Message: %BUILD_MESSAGE% >> build\\build-info.txt'
-                archiveArtifacts(
-                    artifacts: 'build/build-info.txt',
-                    fingerprint: true
-                )
+                bat '''
+                    "%DOCKER%" build ^
+                        -t "%IMAGE%:%BUILD_NUMBER%" ^
+                        -t "%IMAGE%:latest" .
+                '''
             }
         }
 
-        stage('Build Docker Image') {
+        stage('DockerHub Push') {
             when {
-                expression {
-                    params.PUSH_IMAGE || params.DEPLOY_TO_K8S
-                }
+                expression { params.PUSH_IMAGE }
             }
+
             steps {
-                bat 'docker version'
-                bat 'docker build -t %IMAGE_NAME%:%IMAGE_TAG% -t %IMAGE_NAME%:latest .'
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds-ci',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_TOKEN'
+                )]) {
+                    bat '''
+                        @echo off
+                        setlocal DisableDelayedExpansion
+
+                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
+                        if not exist "%DOCKER_CONFIG%" mkdir "%DOCKER_CONFIG%"
+
+                        echo ===== DockerHub Login =====
+                        echo %DOCKER_TOKEN%| "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Push Versioned Image =====
+                        "%DOCKER%" push "%IMAGE%:%BUILD_NUMBER%"
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Push Latest Image =====
+                        "%DOCKER%" push "%IMAGE%:latest"
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== DockerHub Logout =====
+                        "%DOCKER%" logout
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
             }
         }
 
-        stage('Push Image to Docker Hub') {
+        stage('Kubernetes Deploy') {
             when {
-                expression {
-                    params.PUSH_IMAGE
-                }
+                expression { params.DEPLOY_TO_K8S }
             }
+
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    bat 'powershell -NoProfile -NonInteractive -Command "$env:DOCKER_PASS | docker login --username $env:DOCKER_USER --password-stdin"'
+                withCredentials([file(
+                    credentialsId: 'coupon-kubeconfig',
+                    variable: 'KUBECONFIG'
+                )]) {
+                    bat '''
+                        @echo off
 
-                    bat 'docker push %IMAGE_NAME%:%IMAGE_TAG%'
-                    bat 'docker push %IMAGE_NAME%:latest'
+                        set "KUBECTL=C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe"
 
-                    bat 'docker logout'
+                        echo ===== Apply Kubernetes Configuration =====
+                        "%KUBECTL%" apply -f k8s/
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Update Deployment Image =====
+                        "%KUBECTL%" set image deployment/coupon-system coupon-system=%IMAGE%:%BUILD_NUMBER%
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Wait for Deployment =====
+                        "%KUBECTL%" rollout status deployment/coupon-system --timeout=120s
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Deployment Status =====
+                        "%KUBECTL%" get deployment coupon-system
+                        if errorlevel 1 exit /b 1
+                    '''
                 }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            when {
-                expression {
-                    params.DEPLOY_TO_K8S
-                }
-            }
-            steps {
-                bat 'kubectl apply -f k8s\\00-namespace.yaml'
-                bat 'kubectl apply -f k8s\\10-deployment.yaml'
-                bat 'kubectl apply -f k8s\\20-service.yaml'
-
-                bat 'kubectl set image deployment/coupon-system coupon-system=%IMAGE_NAME%:%IMAGE_TAG% -n coupon-system'
-
-                bat 'kubectl rollout status deployment/coupon-system -n coupon-system --timeout=120s'
             }
         }
     }
 
     post {
+        always {
+            bat '''
+                @echo off
+                if exist "%WORKSPACE%\\docker-auth" rmdir /s /q "%WORKSPACE%\\docker-auth"
+                echo Coupon System CI/CD pipeline finished.
+            '''
+        }
+
         success {
-            echo 'Coupon System pipeline completed successfully.'
+            echo 'Pipeline completed successfully!'
         }
 
         failure {
-            echo 'Pipeline failed. Check the Jenkins Console Output.'
-        }
-
-        always {
-            echo 'Coupon System CI/CD pipeline finished.'
+            echo 'Pipeline failed. Check the Console Output.'
         }
     }
 }
-
