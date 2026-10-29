@@ -27,10 +27,10 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'mageshkavi05/coupon-system'
-        IMAGE_TAG = "${BUILD_NUMBER}"
+    	PATH+DOCKER = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin'
+    	IMAGE_NAME = 'mageshkavi05/coupon-system'
+    	IMAGE_TAG = "${BUILD_NUMBER}"
     }
-
     stages {
 
         stage('Checkout from GitHub') {
