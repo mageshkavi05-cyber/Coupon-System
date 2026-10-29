@@ -35,29 +35,27 @@ pipeline {
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_TOKEN'
                 )]) {
-                    bat '''
-                        @echo off
-                        setlocal DisableDelayedExpansion
+                    powershell '''
+                        $ErrorActionPreference = 'Stop'
+                        $env:DOCKER_CONFIG = Join-Path $env:WORKSPACE 'docker-auth'
+                        New-Item -ItemType Directory -Force -Path $env:DOCKER_CONFIG | Out-Null
 
-                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
-                        if not exist "%DOCKER_CONFIG%" mkdir "%DOCKER_CONFIG%"
+                        $token = $env:DOCKER_TOKEN
+                        if ([string]::IsNullOrWhiteSpace($token)) {
+                            throw 'Docker Hub token is empty. Check Jenkins credential dockerhub-creds.'
+                        }
 
-                        echo ===== DockerHub Login =====
-                        "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin < nul
-                    '''
-                    bat '''
-                        @echo off
-                        setlocal DisableDelayedExpansion
+                        $token | & $env:DOCKER login --username $env:DOCKER_USER --password-stdin
+                        if ($LASTEXITCODE -ne 0) {
+                            throw 'Docker Hub login failed.'
+                        }
 
-                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
-                        echo %DOCKER_TOKEN%| "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin
-                        if errorlevel 1 exit /b 1
+                        & $env:DOCKER push $env:IMAGE
+                        if ($LASTEXITCODE -ne 0) {
+                            throw 'Docker Hub image push failed.'
+                        }
 
-                        echo ===== DockerHub Push =====
-                        "%DOCKER%" push "%IMAGE%"
-                        if errorlevel 1 exit /b 1
-
-                        "%DOCKER%" logout
+                        & $env:DOCKER logout
                     '''
                 }
             }
@@ -90,6 +88,7 @@ pipeline {
 
                         echo ===== Service Status =====
                         "%KUBECTL%" get services
+                        if errorlevel 1 exit /b 1
                     '''
                 }
             }
