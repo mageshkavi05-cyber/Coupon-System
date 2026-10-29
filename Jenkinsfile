@@ -27,7 +27,7 @@ pipeline {
     }
 
     environment {
-    	PATH+DOCKER = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin'
+    	PATH = "C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
     	IMAGE_NAME = 'mageshkavi05/coupon-system'
     	IMAGE_TAG = "${BUILD_NUMBER}"
     }
