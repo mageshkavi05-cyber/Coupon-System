@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 
 const app = express();
 app.use(express.json());
@@ -179,6 +179,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log('Coupon System ' + VERSION + ' running on port ' + PORT);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log('Coupon System ' + VERSION + ' running on port ' + PORT);
+  });
+}
+
+module.exports = app;
