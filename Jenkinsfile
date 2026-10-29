@@ -3,9 +3,9 @@ pipeline {
     agent any
 
     environment {
-        IMAGE = 'YOUR_DOCKERHUB_USERNAME/coupon-system-v3:latest'
-        DOCKER = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
-        KUBECTL = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\kubectl.exe'
+        IMAGE = 'mageshkavi05/coupon-system-v3:latest'
+        DOCKER = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+        KUBECTL = 'C:\\Users\\mageshkumar sankar\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe'
     }
 
     stages {
