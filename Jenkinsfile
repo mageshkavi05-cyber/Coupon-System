@@ -3,10 +3,8 @@ pipeline {
     agent any
 
     options {
-        timestamps()
         disableConcurrentBuilds()
     }
-
     parameters {
         string(
             name: 'BUILD_MESSAGE',
