@@ -155,9 +155,13 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Start the application
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(
-        `Coupon System ${VERSION} running on port ${PORT}`
-    );
-});
+// Start the application when run directly
+if (require.main === module) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(
+            `Coupon System ${VERSION} running on port ${PORT}`
+        );
+    });
+}
+
+module.exports = app;
