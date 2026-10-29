@@ -1,80 +1,95 @@
+
 pipeline {
     agent any
 
-    options {
-        timestamps()
-    }
-
     environment {
-        IMAGE_NAME = 'coupon-system-v3'
-        CONTAINER_NAME = 'coupon-system-v3'
-        HOST_PORT = '3003'
-        CONTAINER_PORT = '3000'
+        IMAGE = 'YOUR_DOCKERHUB_USERNAME/coupon-system-v3:latest'
+        DOCKER = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe'
+        KUBECTL = 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\kubectl.exe'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout Verification') {
             steps {
-                checkout scm
+                bat 'git log -1 --oneline'
             }
         }
 
         stage('Install and Test') {
             steps {
-                sh 'npm ci'
-                sh 'npm test'
+                bat 'npm ci'
+                bat 'npm test'
             }
         }
 
-        stage('Build and Push Docker Image') {
+        stage('Docker Build') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKERHUB_USER',
-                        passwordVariable: 'DOCKERHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        IMAGE="$DOCKERHUB_USER/$IMAGE_NAME:latest"
+                bat '"%DOCKER%" build -t %IMAGE% .'
+            }
+        }
 
-                        docker build -t "$IMAGE" .
+        stage('DockerHub Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_TOKEN'
+                )]) {
+                    bat '''
+                        @echo off
+                        setlocal DisableDelayedExpansion
 
-                        printf '%s' "$DOCKERHUB_TOKEN" |
-                            docker login --username "$DOCKERHUB_USER" --password-stdin
+                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
+                        if not exist "%DOCKER_CONFIG%" mkdir "%DOCKER_CONFIG%"
 
-                        docker push "$IMAGE"
-                        docker logout
+                        echo ===== DockerHub Login =====
+                        "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin < nul
+                    '''
+                    bat '''
+                        @echo off
+                        setlocal DisableDelayedExpansion
+
+                        set "DOCKER_CONFIG=%WORKSPACE%\\docker-auth"
+                        echo %DOCKER_TOKEN%| "%DOCKER%" login --username "%DOCKER_USER%" --password-stdin
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== DockerHub Push =====
+                        "%DOCKER%" push "%IMAGE%"
+                        if errorlevel 1 exit /b 1
+
+                        "%DOCKER%" logout
                     '''
                 }
             }
         }
 
-        stage('Deploy V3') {
+        stage('Kubernetes Deploy') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKERHUB_USER',
-                        passwordVariable: 'DOCKERHUB_TOKEN'
-                    )
-                ]) {
-                    sh '''
-                        set -eu
-                        IMAGE="$DOCKERHUB_USER/$IMAGE_NAME:latest"
+                withCredentials([file(
+                    credentialsId: 'coupon-kubeconfig',
+                    variable: 'KUBECONFIG'
+                )]) {
+                    bat '''
+                        @echo off
 
-                        docker pull "$IMAGE"
+                        echo ===== Apply Kubernetes Configuration =====
+                        "%KUBECTL%" apply -f k8s/v3.yaml
+                        if errorlevel 1 exit /b 1
 
-                        docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+                        echo ===== Restart Deployment =====
+                        "%KUBECTL%" rollout restart deployment/coupon-v3
+                        if errorlevel 1 exit /b 1
 
-                        docker run -d \
-                            --name "$CONTAINER_NAME" \
-                            --restart unless-stopped \
-                            -p "$HOST_PORT:$CONTAINER_PORT" \
-                            "$IMAGE"
+                        echo ===== Wait for Deployment =====
+                        "%KUBECTL%" rollout status deployment/coupon-v3 --timeout=120s
+                        if errorlevel 1 exit /b 1
 
-                        docker ps --filter "name=$CONTAINER_NAME"
+                        echo ===== Deployment Status =====
+                        "%KUBECTL%" get deployment coupon-v3
+                        if errorlevel 1 exit /b 1
+
+                        echo ===== Service Status =====
+                        "%KUBECTL%" get services
                     '''
                 }
             }
@@ -82,11 +97,11 @@ pipeline {
     }
 
     post {
-        success {
-            echo 'V3 pipeline completed successfully.'
-        }
-        failure {
-            echo 'V3 pipeline failed. Check the stage logs.'
+        always {
+            bat '''
+                @echo off
+                if exist "%WORKSPACE%\\docker-auth" rmdir /s /q "%WORKSPACE%\\docker-auth"
+            '''
         }
     }
 }
